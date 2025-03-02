@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Sound Website</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body, html {
+            height: 100%;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .background-image {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+        }
+        
+        .sound-button {
+            position: absolute;
+            cursor: pointer;
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+        
+        .sound-button:active {
+            transform: scale(0.95);
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        
+        .control-panel {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+        
+        .mute-button {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="soundContainer">
+        <!-- The background image will be placed here -->
+        <img src="roma.jpg" alt="Background" class="background-image" id="backgroundImage">
+        
+        <!-- Sound buttons will be dynamically created based on user clicks -->
+    </div>
+    
+    <div class="control-panel">
+        <button class="mute-button" id="muteButton">🔊</button>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const container = document.getElementById('soundContainer');
+            const muteButton = document.getElementById('muteButton');
+            
+            // Audio context
+            let audioContext;
+            let sounds = [];
+            let muted = false;
+            
+            // Initialize audio context on user interaction
+            function initAudio() {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    // Create a sound bank (replace these with your own sounds)
+                    sounds = [
+                        { name: 'sound1', path: 'sounds/tvorog.mp3' }
+                    ];
+                    
+                    // Preload sounds
+                    sounds.forEach(sound => {
+                        sound.buffer = null;
+                        loadSound(sound.path).then(buffer => {
+                            sound.buffer = buffer;
+                        });
+                    });
+                }
+            }
+            
+            // Load a sound file
+            async function loadSound(url) {
+                try {
+                    const response = await fetch(url);
+                    const arrayBuffer = await response.arrayBuffer();
+                    return await audioContext.decodeAudioData(arrayBuffer);
+                } catch (error) {
+                    console.error('Error loading sound:', error);
+                    // Use a silent buffer as fallback during development
+                    return audioContext.createBuffer(2, 44100, 44100);
+                }
+            }
+            
+            // Play a sound
+            function playSound(buffer) {
+                if (audioContext && buffer && !muted) {
+                    const source = audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(audioContext.destination);
+                    source.start(0);
+                    return source;
+                }
+                return null;
+            }
+            
+            // Create a visual button at click position
+            function createButton(x, y) {
+                const button = document.createElement('div');
+                button.className = 'sound-button';
+                
+                // Random size between 50 and 150px
+                const size = Math.floor(Math.random() * 100) + 50;
+                
+                button.style.width = `${size}px`;
+                button.style.height = `${size}px`;
+                button.style.left = `${x - size/2}px`;
+                button.style.top = `${y - size/2}px`;
+                
+                container.appendChild(button);
+                
+                // Animation for button appearance
+                button.animate([
+                    { opacity: 0, transform: 'scale(0.5)' },
+                    { opacity: 1, transform: 'scale(1)' }
+                ], {
+                    duration: 300,
+                    easing: 'ease-out'
+                });
+                
+                // Remove button after animation
+                setTimeout(() => {
+                    button.animate([
+                        { opacity: 1, transform: 'scale(1)' },
+                        { opacity: 0, transform: 'scale(1.5)' }
+                    ], {
+                        duration: 500,
+                        easing: 'ease-in'
+                    }).onfinish = () => {
+                        button.remove();
+                    };
+                }, 1000);
+            }
+            
+            // Handle clicks anywhere on the container
+            container.addEventListener('click', function(event) {
+                // Initialize audio on first click
+                initAudio();
+                
+                // Get click position
+                const x = event.clientX;
+                const y = event.clientY;
+                
+                // Create visual button
+                createButton(x, y);
+                
+                // Play random sound from our bank
+                if (sounds.length > 0 && audioContext) {
+                    const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
+                    if (randomSound.buffer) {
+                        playSound(randomSound.buffer);
+                    }
+                }
+            });
+            
+            // Mute/Unmute button
+            muteButton.addEventListener('click', function(event) {
+                event.stopPropagation(); // Prevent container click
+                muted = !muted;
+                muteButton.textContent = muted ? '🔇' : '🔊';
+            });
+            
+            // Prevent scrolling/zooming on mobile
+            document.addEventListener('touchmove', function(event) {
+                if (event.touches.length > 1) {
+                    event.preventDefault();
+                }
+            }, { passive: false });
+            
+            // Handle touch events for mobile
+            container.addEventListener('touchstart', function(event) {
+                // Initialize audio on first touch
+                initAudio();
+                
+                // Get touch position
+                const touch = event.touches[0];
+                const x = touch.clientX;
+                const y = touch.clientY;
+                
+                // Create visual button
+                createButton(x, y);
+                
+                // Play random sound
+                if (sounds.length > 0 && audioContext) {
+                    const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
+                    if (randomSound.buffer) {
+                        playSound(randomSound.buffer);
+                    }
+                }
+                
+                // Prevent default behavior
+                event.preventDefault();
+            }, { passive: false });
+        });
+    </script>
+</body>
+</html>
