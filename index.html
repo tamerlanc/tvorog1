@@ -83,12 +83,26 @@
             font-size: 14px;
             z-index: 100;
         }
+        
+        #debugInfo {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 80%;
+            z-index: 100;
+        }
     </style>
 </head>
 <body>
     <div class="container" id="soundContainer">
         <!-- The background image will be placed here -->
-        <img src="roma.jpg" alt="Background" class="background-image" id="backgroundImage">
+        <img src="/api/placeholder/800/600" alt="Background" class="background-image" id="backgroundImage">
         
         <!-- Sound buttons will be dynamically created based on user clicks -->
     </div>
@@ -98,154 +112,214 @@
     </div>
     
     <div class="status-indicator" id="statusIndicator">Tap to start</div>
+    <div id="debugInfo"></div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const container = document.getElementById('soundContainer');
             const muteButton = document.getElementById('muteButton');
             const statusIndicator = document.getElementById('statusIndicator');
+            const debugInfo = document.getElementById('debugInfo');
             
-            // Audio elements
-            let audioElements = {};
-            let currentAudio = null;
+            // Audio elements and state tracking
+            const sounds = [];
+            let activeSound = null;
             let isPlaying = false;
             let muted = false;
-            let audioContext = null;
+            let firstInteraction = true;
             let audioInitialized = false;
+            let lastEndTime = 0;
+            
+            // Debug function
+            function debug(message) {
+                debugInfo.textContent = message;
+                console.log(message);
+            }
             
             // Update status
             function updateStatus(message) {
                 statusIndicator.textContent = message;
             }
             
-            // Initialize audio - creates all required audio elements
-            function initializeAudio() {
-                if (audioInitialized) return;
-                
-                // Create audio context for WebAudio API
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                // Define sound files - replace with your actual sounds
+            // Preload all sounds
+            function preloadSounds() {
+                // Define sound files (replace with your actual sound files)
                 const soundFiles = [
-                    { id: 'sound1', path: 'sounds/tvorog.mp3' }
+                    'sounds/tvorog.mp3'
                 ];
                 
-                // Create HTML5 Audio elements for each sound
-                soundFiles.forEach(sound => {
+                // Create an audio element for each sound
+                soundFiles.forEach((src, index) => {
                     const audio = new Audio();
-                    audio.src = sound.path;
-                    audio.preload = 'auto';
                     
-                    // Critical: Force iOS to allow audio in silent mode
-                    audio.setAttribute('webkit-playsinline', 'webkit-playsinline');
+                    // Set critical attributes for iOS silent mode
                     audio.setAttribute('playsinline', 'playsinline');
+                    audio.setAttribute('webkit-playsinline', 'webkit-playsinline');
+                    audio.preload = 'auto';
+                    audio.src = src;
                     
-                    // Set audio to high priority
-                    audio.mozAudioChannelType = 'content'; // Firefox OS
-                    
-                    // Make it so the audio doesn't use the media session
-                    if ('mediaSession' in navigator) {
-                        navigator.mediaSession.playbackState = 'none';
-                    }
-                    
-                    // When audio ends, allow new playback
-                    audio.onended = function() {
+                    // Set up event listeners
+                    audio.addEventListener('ended', function() {
+                        debug(`Sound ${index} ended naturally`);
                         isPlaying = false;
-                        currentAudio = null;
+                        activeSound = null;
+                        lastEndTime = Date.now();
                         updateStatus('Ready for next sound');
-                    };
+                    });
                     
-                    // Add to our collection
-                    audioElements[sound.id] = audio;
+                    audio.addEventListener('pause', function() {
+                        if (!audio.ended && isPlaying && activeSound === audio) {
+                            debug(`Sound ${index} paused unexpectedly`);
+                            // Only update state if this is our active sound and it didn't end naturally
+                            isPlaying = false;
+                            activeSound = null;
+                            lastEndTime = Date.now();
+                            updateStatus('Ready for next sound');
+                        }
+                    });
+                    
+                    audio.addEventListener('error', function(e) {
+                        debug(`Sound ${index} error: ${e.message}`);
+                        isPlaying = false;
+                        activeSound = null;
+                    });
+                    
+                    // Store the audio element
+                    sounds.push(audio);
+                    
+                    // Add to document to help with iOS
                     document.body.appendChild(audio);
                 });
                 
-                // Create a special unlock audio element to bypass iOS silent mode
-                const unlockEl = document.createElement('audio');
-                unlockEl.id = 'unlockAudio';
-                unlockEl.loop = false;
-                unlockEl.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABBwC2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2AAAAAAAAAAAAAAAA//tQxAADwAABpAAAACAAADSAAAAAQHRyYWMAAAAAEAAAAFRJVDIAAAAOAAAAAExhdmY1OC4yOS4xMDBUQUcAAAAAAAAAAAAAAAAA";
-                unlockEl.setAttribute('webkit-playsinline', 'webkit-playsinline');
-                unlockEl.setAttribute('playsinline', 'playsinline');
-                document.body.appendChild(unlockEl);
-                
-                audioInitialized = true;
-                updateStatus('Audio initialized - tap anywhere');
+                debug(`Preloaded ${sounds.length} sounds`);
             }
             
-            // Unlock audio specifically for iOS devices
-            function unlockAudioForIOS() {
-                // First try to resume the audio context
-                if (audioContext && audioContext.state === 'suspended') {
-                    audioContext.resume();
-                }
+            // Initialize all audio
+            function initializeAudio() {
+                if (audioInitialized) return;
                 
-                // Play our special silent audio to unlock
+                preloadSounds();
+                
+                // Create a silent audio element specifically for unlocking audio
+                const unlockAudio = new Audio();
+                unlockAudio.id = 'unlockAudio';
+                unlockAudio.autoplay = false;
+                unlockAudio.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABBwC2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2AAAAAAAAAAAAAAAA//tQxAADwAABpAAAACAAADSAAAAAQHRyYWMAAAAAEAAAAFRJVDIAAAAOAAAAAExhdmY1OC4yOS4xMDBUQUcAAAAAAAAAAAAAAAAA";
+                unlockAudio.setAttribute('playsinline', 'playsinline');
+                unlockAudio.setAttribute('webkit-playsinline', 'webkit-playsinline');
+                document.body.appendChild(unlockAudio);
+                
+                audioInitialized = true;
+                debug("Audio initialized");
+            }
+            
+            // Unlock audio on iOS devices
+            function unlockAudio() {
+                debug("Attempting to unlock audio");
+                
+                // Play the silent audio to unlock audio system
                 const unlockEl = document.getElementById('unlockAudio');
                 if (unlockEl) {
-                    unlockEl.play()
-                        .then(() => {
-                            unlockEl.pause();
-                            unlockEl.currentTime = 0;
-                        })
-                        .catch(e => console.log('Audio unlock error:', e));
+                    const playPromise = unlockEl.play();
+                    if (playPromise !== undefined) {
+                        playPromise
+                            .then(() => {
+                                debug("Unlock audio played successfully");
+                                setTimeout(() => {
+                                    unlockEl.pause();
+                                    unlockEl.currentTime = 0;
+                                }, 100);
+                            })
+                            .catch(err => {
+                                debug(`Unlock audio failed: ${err.message}`);
+                            });
+                    }
                 }
                 
-                // Try to briefly play and pause each audio element
-                Object.values(audioElements).forEach(audio => {
-                    audio.play()
-                        .then(() => {
-                            audio.pause();
-                            audio.currentTime = 0;
-                        })
-                        .catch(e => console.log('Audio element unlock error:', e));
+                // Also try playing and immediately pausing each sound
+                sounds.forEach((audio, index) => {
+                    const playPromise = audio.play();
+                    if (playPromise !== undefined) {
+                        playPromise
+                            .then(() => {
+                                debug(`Sound ${index} unlock successful`);
+                                setTimeout(() => {
+                                    audio.pause();
+                                    audio.currentTime = 0;
+                                }, 50);
+                            })
+                            .catch(err => {
+                                debug(`Sound ${index} unlock failed: ${err.message}`);
+                            });
+                    }
                 });
             }
             
-            // Play a specific sound
+            // Play a sound
             function playSound() {
-                if (isPlaying || muted) {
-                    if (isPlaying) updateStatus('Already playing a sound');
+                if (muted) {
+                    updateStatus('Sound is muted');
                     return;
                 }
                 
-                // Get a random sound ID
-                const soundIds = Object.keys(audioElements);
-                if (soundIds.length === 0) return;
+                // Force a reset of the playing state if we think a sound is playing
+                // but it's been more than 10 seconds (could be a stuck state)
+                const now = Date.now();
+                if (isPlaying && (now - lastEndTime > 10000)) {
+                    debug("Forcing reset of stuck playing state");
+                    isPlaying = false;
+                    activeSound = null;
+                }
                 
-                const randomId = soundIds[Math.floor(Math.random() * soundIds.length)];
-                const audio = audioElements[randomId];
-                
-                if (!audio) {
-                    updateStatus('Sound not found');
+                if (isPlaying) {
+                    debug("Already playing");
+                    updateStatus('Already playing a sound');
                     return;
                 }
                 
-                // Reset the audio to the beginning
+                // Get a random sound
+                if (sounds.length === 0) {
+                    debug("No sounds available");
+                    updateStatus('No sounds available');
+                    return;
+                }
+                
+                const randomIndex = Math.floor(Math.random() * sounds.length);
+                const audio = sounds[randomIndex];
+                
+                // Reset the audio to beginning
                 audio.currentTime = 0;
                 
-                // Try the more reliable HTMLMediaElement API first
+                // Start playing
+                debug(`Attempting to play sound ${randomIndex}`);
                 const playPromise = audio.play();
                 
                 if (playPromise !== undefined) {
-                    playPromise.then(() => {
-                        // Playback started successfully
-                        isPlaying = true;
-                        currentAudio = audio;
-                        updateStatus('Sound playing');
-                    }).catch(error => {
-                        // Auto-play was prevented
-                        console.error("Playback failed:", error);
-                        updateStatus('Sound blocked - tap again');
-                        
-                        // Try to unlock audio again
-                        unlockAudioForIOS();
-                    });
+                    playPromise
+                        .then(() => {
+                            debug(`Sound ${randomIndex} started playing`);
+                            isPlaying = true;
+                            activeSound = audio;
+                            updateStatus('Playing sound...');
+                        })
+                        .catch(err => {
+                            debug(`Play error: ${err.message}`);
+                            isPlaying = false;
+                            activeSound = null;
+                            updateStatus('Sound failed to play - tap again');
+                            
+                            // If this is the first interaction, try unlocking audio
+                            if (firstInteraction) {
+                                unlockAudio();
+                                firstInteraction = false;
+                            }
+                        });
                 } else {
-                    // Older browsers might not return a promise
+                    // For browsers that don't return a promise
+                    debug("Legacy play method used");
                     isPlaying = true;
-                    currentAudio = audio;
-                    updateStatus('Sound playing (legacy)');
+                    activeSound = audio;
+                    updateStatus('Playing sound...');
                 }
             }
             
@@ -264,7 +338,7 @@
                 
                 container.appendChild(button);
                 
-                // Animation for button appearance
+                // Simple animation
                 button.animate([
                     { opacity: 0, transform: 'scale(0.5)' },
                     { opacity: 1, transform: 'scale(1)' }
@@ -287,29 +361,45 @@
                 }, 1000);
             }
             
-            // Handle interaction (touch or click)
+            // Handle user interaction
             function handleInteraction(x, y) {
-                // Initialize audio on first interaction if needed
+                // Initialize audio if not already done
                 if (!audioInitialized) {
                     initializeAudio();
                 }
                 
-                // Try to unlock audio (especially for iOS)
-                unlockAudioForIOS();
+                // Try to unlock audio on first interaction
+                if (firstInteraction) {
+                    unlockAudio();
+                    firstInteraction = false;
+                }
                 
                 // Create visual button
                 createButton(x, y);
                 
-                // Play a sound
+                // Play a sound immediately
                 playSound();
+                
+                // If we're on iOS, we might need to try harder
+                if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                    debug("iOS device detected");
+                    
+                    // For iOS, try again after a short delay if not playing
+                    setTimeout(() => {
+                        if (!isPlaying) {
+                            debug("Retry play on iOS");
+                            playSound();
+                        }
+                    }, 300);
+                }
             }
             
-            // Handle mouse clicks
+            // Mouse click event
             container.addEventListener('click', function(event) {
                 handleInteraction(event.clientX, event.clientY);
             });
             
-            // Handle touch events for mobile
+            // Touch event for mobile
             container.addEventListener('touchstart', function(event) {
                 const touch = event.touches[0];
                 handleInteraction(touch.clientX, touch.clientY);
@@ -322,39 +412,33 @@
                 muted = !muted;
                 muteButton.textContent = muted ? '🔇' : '🔊';
                 
-                // If currently playing and muting, stop the sound
-                if (muted && currentAudio && isPlaying) {
-                    currentAudio.pause();
-                    currentAudio.currentTime = 0;
+                // If currently playing, stop it
+                if (muted && activeSound && isPlaying) {
+                    activeSound.pause();
+                    activeSound.currentTime = 0;
                     isPlaying = false;
-                    currentAudio = null;
+                    activeSound = null;
+                    updateStatus('Sound muted');
+                } else {
+                    updateStatus(muted ? 'Sound muted' : 'Sound unmuted');
                 }
-                
-                updateStatus(muted ? 'Sound muted' : 'Sound unmuted');
             });
             
-            // Additional event listeners to help with iOS audio in silent mode
-            document.addEventListener('touchend', unlockAudioForIOS);
-            document.addEventListener('click', unlockAudioForIOS);
-            window.addEventListener('focus', unlockAudioForIOS);
-            
-            // Prevent zoom on double-tap
-            let lastTapTime = 0;
-            document.addEventListener('touchend', function(event) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastTapTime;
-                if (tapLength < 500 && tapLength > 0) {
-                    event.preventDefault();
+            // Additional handler for iOS
+            window.addEventListener('focus', function() {
+                debug("Window focus event");
+                if (firstInteraction) {
+                    unlockAudio();
                 }
-                lastTapTime = currentTime;
             });
             
-            // Initialize WebAudio vibration if available
-            if ('vibrate' in navigator) {
-                container.addEventListener('click', function() {
-                    navigator.vibrate(50); // Vibrate for 50ms on click
-                });
-            }
+            // Global error handler
+            window.addEventListener('error', function(e) {
+                debug(`Global error: ${e.message}`);
+            });
+            
+            // Initial setup
+            updateStatus('Tap anywhere to play sounds');
         });
     </script>
 </body>
