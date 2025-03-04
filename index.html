@@ -70,6 +70,21 @@
             cursor: pointer;
             font-size: 16px;
         }
+        
+        .status-indicator {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -83,21 +98,40 @@
     <div class="control-panel">
         <button class="mute-button" id="muteButton">🔊</button>
     </div>
+    
+    <div class="status-indicator" id="statusIndicator">Ready</div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const container = document.getElementById('soundContainer');
             const muteButton = document.getElementById('muteButton');
+            const statusIndicator = document.getElementById('statusIndicator');
             
             // Audio context
             let audioContext;
             let sounds = [];
             let muted = false;
+            let isPlaying = false; // Track if a sound is currently playing
+            let currentSource = null;
+            
+            // Show status message temporarily
+            function showStatus(message, duration = 1500) {
+                statusIndicator.textContent = message;
+                statusIndicator.style.opacity = "1";
+                setTimeout(() => {
+                    statusIndicator.style.opacity = "0";
+                }, duration);
+            }
             
             // Initialize audio context on user interaction
             function initAudio() {
                 if (!audioContext) {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    // Create audio context with options to work better on mobile
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioContext = new AudioContext({
+                        latencyHint: 'interactive',
+                        sampleRate: 44100
+                    });
                     
                     // Create a sound bank (replace these with your own sounds)
                     sounds = [
@@ -109,8 +143,16 @@
                         sound.buffer = null;
                         loadSound(sound.path).then(buffer => {
                             sound.buffer = buffer;
+                            sound.duration = buffer.duration;
                         });
                     });
+                    
+                    showStatus("Audio initialized");
+                }
+                
+                // Make sure audio context is running (needed for iOS)
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
                 }
             }
             
@@ -123,20 +165,76 @@
                 } catch (error) {
                     console.error('Error loading sound:', error);
                     // Use a silent buffer as fallback during development
-                    return audioContext.createBuffer(2, 44100, 44100);
+                    const buffer = audioContext.createBuffer(2, 44100, 44100);
+                    buffer.duration = 2; // Default duration for fallback
+                    return buffer;
                 }
             }
             
             // Play a sound
             function playSound(buffer) {
+                // Don't play if another sound is already playing
+                if (isPlaying) {
+                    showStatus("Already playing...");
+                    return null;
+                }
+                
                 if (audioContext && buffer && !muted) {
+                    // Resume audio context (needed for iOS and some mobile browsers)
+                    if (audioContext.state === 'suspended') {
+                        audioContext.resume();
+                    }
+                    
+                    // Create an audio element for better mobile compatibility
+                    // This helps bypass silent mode restrictions
+                    const audioElement = new Audio();
+                    audioElement.crossOrigin = "anonymous";
+                    
+                    // Create a media element source
                     const source = audioContext.createBufferSource();
                     source.buffer = buffer;
+                    
+                    // Connect source to destination
                     source.connect(audioContext.destination);
+                    
+                    // Start playback
                     source.start(0);
+                    currentSource = source;
+                    isPlaying = true;
+                    showStatus("Playing sound...");
+                    
+                    // Set a timer to mark when sound is done playing
+                    const duration = buffer.duration * 1000; // Convert to milliseconds
+                    setTimeout(() => {
+                        isPlaying = false;
+                        currentSource = null;
+                        showStatus("Ready for next sound");
+                    }, duration);
+                    
                     return source;
                 }
                 return null;
+            }
+            
+            // Force audio to play even in silent mode (iOS devices)
+            function unlockAudio() {
+                // Create a silent audio buffer
+                const silentBuffer = audioContext.createBuffer(1, 1, 22050);
+                const source = audioContext.createBufferSource();
+                source.buffer = silentBuffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                
+                // Create and play a silent audio element (helps with iOS silent mode)
+                const silentAudio = new Audio();
+                silentAudio.autoplay = true;
+                silentAudio.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABBwC2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2AAAAAAAAAAAAAAAA//tQxAADwAABpAAAACAAADSAAAAAQHRyYWMAAAAAEAAAAFRJVDIAAAAOAAAAAExhdmY1OC4yOS4xMDBUQUcAAAAAAAAAAAAAAAAA";
+                document.body.appendChild(silentAudio);
+                
+                // Remove it after playing
+                silentAudio.onended = function() {
+                    document.body.removeChild(silentAudio);
+                };
             }
             
             // Create a visual button at click position
@@ -177,25 +275,34 @@
                 }, 1000);
             }
             
-            // Handle clicks anywhere on the container
-            container.addEventListener('click', function(event) {
-                // Initialize audio on first click
+            // Handle user interaction
+            function handleInteraction(x, y) {
+                // Initialize audio on first interaction
                 initAudio();
                 
-                // Get click position
-                const x = event.clientX;
-                const y = event.clientY;
+                // Unlock audio for iOS (bypass silent mode)
+                unlockAudio();
                 
                 // Create visual button
                 createButton(x, y);
                 
-                // Play random sound from our bank
-                if (sounds.length > 0 && audioContext) {
+                // Play random sound from our bank if no sound is currently playing
+                if (sounds.length > 0 && audioContext && !isPlaying) {
                     const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
                     if (randomSound.buffer) {
                         playSound(randomSound.buffer);
                     }
                 }
+            }
+            
+            // Handle clicks anywhere on the container
+            container.addEventListener('click', function(event) {
+                // Get click position
+                const x = event.clientX;
+                const y = event.clientY;
+                
+                // Handle the interaction
+                handleInteraction(x, y);
             });
             
             // Mute/Unmute button
@@ -203,6 +310,14 @@
                 event.stopPropagation(); // Prevent container click
                 muted = !muted;
                 muteButton.textContent = muted ? '🔇' : '🔊';
+                showStatus(muted ? "Sound muted" : "Sound unmuted");
+                
+                // Stop current sound if muting
+                if (muted && currentSource) {
+                    currentSource.stop();
+                    currentSource = null;
+                    isPlaying = false;
+                }
             });
             
             // Prevent scrolling/zooming on mobile
@@ -214,28 +329,30 @@
             
             // Handle touch events for mobile
             container.addEventListener('touchstart', function(event) {
-                // Initialize audio on first touch
-                initAudio();
-                
                 // Get touch position
                 const touch = event.touches[0];
                 const x = touch.clientX;
                 const y = touch.clientY;
                 
-                // Create visual button
-                createButton(x, y);
-                
-                // Play random sound
-                if (sounds.length > 0 && audioContext) {
-                    const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
-                    if (randomSound.buffer) {
-                        playSound(randomSound.buffer);
-                    }
-                }
+                // Handle the interaction
+                handleInteraction(x, y);
                 
                 // Prevent default behavior
                 event.preventDefault();
             }, { passive: false });
+            
+            // Add these event listeners to ensure audio works on iOS
+            document.addEventListener('touchend', function() {
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+            });
+            
+            window.addEventListener('focus', function() {
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+            });
         });
     </script>
 </body>
